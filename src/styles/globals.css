@@ -1,0 +1,255 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   JAWIR OS - Global Styles
+   ============================================ */
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #2d2a1e;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4a4637;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5a5647;
+}
+
+/* Selection color */
+::selection {
+  background-color: rgba(218, 184, 11, 0.3);
+  color: #f1f0ea;
+}
+
+/* ============================================
+   Batik Trim Pattern
+   ============================================ */
+.batik-trim {
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    #dab80b 0%,
+    #f5e879 25%,
+    #dab80b 50%,
+    #f5e879 75%,
+    #dab80b 100%
+  );
+  background-size: 40px 100%;
+  animation: batik-scroll 3s linear infinite;
+}
+
+@keyframes batik-scroll {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 40px 0;
+  }
+}
+
+/* ============================================
+   Dot Pattern Background
+   ============================================ */
+.dot-pattern {
+  background-image: radial-gradient(circle, rgba(218, 184, 11, 0.1) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ============================================
+   Voice Waveform Animation
+   ============================================ */
+.waveform-bar {
+  @apply w-1 bg-primary rounded-full transition-all duration-75;
+}
+
+.waveform-container {
+  @apply flex items-center justify-center gap-0.5 h-8;
+}
+
+/* ============================================
+   Status Badge Animations
+   ============================================ */
+.status-pulse {
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.status-listening {
+  animation: listening-glow 1.5s ease-in-out infinite;
+}
+
+@keyframes listening-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(218, 184, 11, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(218, 184, 11, 0);
+  }
+}
+
+/* ============================================
+   Card Hover Effects
+   ============================================ */
+.card-interactive {
+  @apply transition-all duration-200 ease-out;
+}
+
+.card-interactive:hover {
+  @apply shadow-card-hover -translate-y-0.5;
+}
+
+/* ============================================
+   Button Styles
+   ============================================ */
+.btn-primary {
+  @apply px-4 py-2 bg-primary text-coffee-dark font-semibold rounded-xl
+         hover:bg-primary-hover active:scale-95 transition-all duration-150
+         shadow-primary;
+}
+
+.btn-secondary {
+  @apply px-4 py-2 bg-coffee-light text-cream font-medium rounded-xl
+         hover:bg-coffee-medium active:scale-95 transition-all duration-150
+         border border-cream/10;
+}
+
+.btn-ghost {
+  @apply px-4 py-2 text-cream-muted font-medium rounded-xl
+         hover:bg-coffee-light hover:text-cream transition-all duration-150;
+}
+
+/* ============================================
+   Material Symbols Customization
+   ============================================ */
+.material-symbols-outlined {
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
+}
+
+.material-symbols-outlined.filled {
+  font-variation-settings:
+    'FILL' 1,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
+}
+
+/* ============================================
+   Layout Utilities
+   ============================================ */
+.sidebar-width {
+  width: 420px;
+  min-width: 380px;
+  max-width: 480px;
+}
+
+.header-height {
+  height: 64px;
+}
+
+/* ============================================
+   Alarm/Alert Animations
+   ============================================ */
+.alarm-pulse {
+  animation: alarm-pulse 0.5s ease-in-out infinite;
+}
+
+@keyframes alarm-pulse {
+  0%, 100% {
+    background-color: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+  }
+  50% {
+    background-color: rgba(239, 68, 68, 0.4);
+    border-color: rgba(239, 68, 68, 0.8);
+  }
+}
+
+/* ============================================
+   Loading States
+   ============================================ */
+.skeleton {
+  @apply bg-coffee-light animate-pulse rounded;
+}
+
+.spinner {
+  @apply w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin;
+}
+
+/* ============================================
+   Tab Navigation
+   ============================================ */
+.tab-active {
+  @apply text-primary border-b-2 border-primary;
+}
+
+.tab-inactive {
+  @apply text-cream-muted hover:text-cream border-b-2 border-transparent;
+}
+
+/* ============================================
+   Toast & Modal Animations
+   ============================================ */
+.animate-in {
+  animation: animate-in 0.3s ease-out;
+}
+
+.slide-in-from-right {
+  --tw-enter-translate-x: 100%;
+}
+
+.zoom-in-95 {
+  --tw-enter-scale: 0.95;
+}
+
+.fade-in {
+  --tw-enter-opacity: 0;
+}
+
+@keyframes animate-in {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0)) 
+               scale(var(--tw-enter-scale, 1));
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+/* Fan spin animation */
+.animate-spin-slow {
+  animation: spin 3s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

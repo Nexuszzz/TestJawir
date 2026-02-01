@@ -1,0 +1,16 @@
+# Jawir OI Server Requirements
+# Open Interpreter wrapper with FastAPI
+
+# Core
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.5.0
+
+# Open Interpreter
+open-interpreter>=0.2.0
+
+# Async support
+aiofiles>=23.2.1
+
+# WebSocket
+websockets>=12.0
