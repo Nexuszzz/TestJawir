@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, Notification } from 'electron'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { initKiCadMCPBridge, cleanupKiCadMCPBridge } from './kicad-mcp-bridge.js'
 
 // ESM compatibility for __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -55,6 +56,9 @@ function createWindow() {
 // App lifecycle
 app.whenReady().then(() => {
   createWindow()
+
+  // Initialize KiCad MCP Bridge
+  initKiCadMCPBridge()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -153,7 +157,7 @@ const WINDOWS_APPS: Record<string, string> = {
   'firefox': 'firefox.exe',
   'edge': 'msedge.exe',
   'microsoft edge': 'msedge.exe',
-  
+
   // Office
   'word': 'WINWORD.EXE',
   'microsoft word': 'WINWORD.EXE',
@@ -161,7 +165,7 @@ const WINDOWS_APPS: Record<string, string> = {
   'microsoft excel': 'EXCEL.EXE',
   'powerpoint': 'POWERPNT.EXE',
   'microsoft powerpoint': 'POWERPNT.EXE',
-  
+
   // Development
   'vscode': 'code.exe',
   'visual studio code': 'code.exe',
@@ -172,11 +176,11 @@ const WINDOWS_APPS: Record<string, string> = {
   'cmd': 'cmd.exe',
   'command prompt': 'cmd.exe',
   'powershell': 'powershell.exe',
-  
+
   // Media
   'spotify': 'Spotify.exe',
   'vlc': 'vlc.exe',
-  
+
   // System
   'explorer': 'explorer.exe',
   'file explorer': 'explorer.exe',
@@ -184,12 +188,12 @@ const WINDOWS_APPS: Record<string, string> = {
   'kalkulator': 'calc.exe',
   'settings': 'ms-settings:',
   'pengaturan': 'ms-settings:',
-  
+
   // Communication
   'whatsapp': 'WhatsApp.exe',
   'telegram': 'Telegram.exe',
   'discord': 'Discord.exe',
-  
+
   // Electronics
   'kicad': 'kicad.exe',
   'ltspice': 'LTspice.exe',
@@ -199,27 +203,27 @@ const WINDOWS_APPS: Record<string, string> = {
 ipcMain.handle('computer:openApp', async (_event, appName: string) => {
   try {
     const normalizedName = appName.toLowerCase().trim()
-    
+
     // Check if it's a known app
     if (WINDOWS_APPS[normalizedName]) {
       const appExe = WINDOWS_APPS[normalizedName]
-      
+
       // Handle ms-settings: protocol
       if (appExe.startsWith('ms-')) {
         await shell.openExternal(appExe)
         return { success: true, app: appExe }
       }
-      
+
       // Try to start the app
-      spawn(appExe, [], { 
-        detached: true, 
+      spawn(appExe, [], {
+        detached: true,
         stdio: 'ignore',
-        shell: true 
+        shell: true
       }).unref()
-      
+
       return { success: true, app: appExe }
     }
-    
+
     // Try to find in Start Menu or run directly
     try {
       await execAsync(`start "" "${appName}"`, { shell: 'cmd.exe' })
@@ -241,14 +245,14 @@ ipcMain.handle('computer:openApp', async (_event, appName: string) => {
 ipcMain.handle('computer:execute', async (_event, command: string) => {
   try {
     const { stdout, stderr } = await execAsync(command, { shell: 'powershell.exe' })
-    return { 
-      success: true, 
-      stdout: stdout.trim(), 
-      stderr: stderr.trim() 
+    return {
+      success: true,
+      stdout: stdout.trim(),
+      stderr: stderr.trim()
     }
   } catch (error: any) {
-    return { 
-      success: false, 
+    return {
+      success: false,
       error: error.message,
       stdout: error.stdout || '',
       stderr: error.stderr || ''
@@ -261,7 +265,7 @@ ipcMain.handle('computer:setVolume', async (_event, level: number) => {
   try {
     // Clamp level between 0 and 100
     const vol = Math.max(0, Math.min(100, level))
-    
+
     // Using PowerShell to set volume
     const script = `
       $vol = ${vol}
@@ -388,7 +392,7 @@ ipcMain.handle('computer:screenshot', async () => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const filename = `screenshot-${timestamp}.png`
     const filepath = join(app.getPath('pictures'), filename)
-    
+
     // Using PowerShell to capture screenshot
     const script = `
       Add-Type -AssemblyName System.Windows.Forms
@@ -421,25 +425,25 @@ ipcMain.handle('oi:start', async () => {
   if (oiServerProcess && oiServerStatus === 'running') {
     return { success: true, message: 'OI Server already running', status: 'running' }
   }
-  
+
   try {
     oiServerStatus = 'starting'
-    
+
     // Path to the OI server
     const serverPath = join(__dirname, '../python/oi-server')
     const venvPython = join(serverPath, 'venv/Scripts/python.exe')
-    
+
     // Check if venv exists, otherwise use system python
     const pythonPath = await checkFileExists(venvPython) ? venvPython : 'python'
-    
+
     console.log(`Starting OI Server with: ${pythonPath}`)
-    
+
     oiServerProcess = spawn(pythonPath, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8765'], {
       cwd: serverPath,
       shell: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
-    
+
     oiServerProcess.stdout?.on('data', (data) => {
       console.log(`[OI Server] ${data}`)
       // Check if server started successfully
@@ -448,7 +452,7 @@ ipcMain.handle('oi:start', async () => {
         mainWindow?.webContents.send('oi:status', { status: 'running' })
       }
     })
-    
+
     oiServerProcess.stderr?.on('data', (data) => {
       console.error(`[OI Server Error] ${data}`)
       // Uvicorn logs to stderr normally
@@ -457,29 +461,29 @@ ipcMain.handle('oi:start', async () => {
         mainWindow?.webContents.send('oi:status', { status: 'running' })
       }
     })
-    
+
     oiServerProcess.on('close', (code) => {
       console.log(`[OI Server] Process exited with code ${code}`)
       oiServerStatus = code === 0 ? 'stopped' : 'error'
       oiServerProcess = null
       mainWindow?.webContents.send('oi:status', { status: oiServerStatus })
     })
-    
+
     oiServerProcess.on('error', (err) => {
       console.error(`[OI Server] Failed to start:`, err)
       oiServerStatus = 'error'
       oiServerProcess = null
       mainWindow?.webContents.send('oi:status', { status: 'error', error: err.message })
     })
-    
+
     // Wait a bit and check if started
     await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    return { 
-      success: oiServerStatus !== 'error', 
+
+    return {
+      success: oiServerStatus !== 'error',
       status: oiServerStatus,
-      message: oiServerStatus === 'starting' ? 'OI Server starting...' : 
-               oiServerStatus === 'running' ? 'OI Server started' : 'Failed to start OI Server'
+      message: oiServerStatus === 'starting' ? 'OI Server starting...' :
+        oiServerStatus === 'running' ? 'OI Server started' : 'Failed to start OI Server'
     }
   } catch (error) {
     oiServerStatus = 'error'
@@ -493,7 +497,7 @@ ipcMain.handle('oi:stop', async () => {
     oiServerStatus = 'stopped'
     return { success: true, message: 'OI Server not running', status: 'stopped' }
   }
-  
+
   try {
     oiServerProcess.kill('SIGTERM')
     oiServerProcess = null
@@ -542,6 +546,9 @@ app.on('before-quit', () => {
     oiServerProcess.kill('SIGTERM')
     oiServerProcess = null
   }
+
+  // Cleanup KiCad MCP Bridge
+  cleanupKiCadMCPBridge()
 })
 
 console.log('Jawir OS Main Process Started')

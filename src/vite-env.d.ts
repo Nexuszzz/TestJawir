@@ -39,6 +39,43 @@ interface OIAPI {
   onStatusChange: (callback: (data: { status: string; error?: string }) => void) => () => void
 }
 
+// KiCad MCP Server API types
+interface KiCadAPI {
+  checkStatus: () => Promise<{ running: boolean; message: string }>
+  createProject: (name: string, path: string) => Promise<{ success: boolean; message?: string }>
+  createSchematic: (name: string) => Promise<{ success: boolean; message?: string; path?: string }>
+  addSchematicComponent: (params: {
+    schematicPath: string
+    symbol: string
+    reference: string
+    value?: string
+    position: { x: number; y: number }
+  }) => Promise<{ success: boolean; message?: string }>
+  addWire: (params: {
+    start: { x: number; y: number }
+    end: { x: number; y: number }
+  }) => Promise<{ success: boolean; message?: string }>
+  addSchematicConnection: (params: {
+    schematicPath: string
+    sourceRef: string
+    sourcePin: string
+    targetRef: string
+    targetPin: string
+  }) => Promise<{ success: boolean; message?: string }>
+  addSchematicNetLabel: (params: {
+    schematicPath: string
+    netName: string
+    position: number[]
+  }) => Promise<{ success: boolean; message?: string }>
+  launchUI: (projectPath?: string) => Promise<{ success: boolean; message?: string }>
+  openProject: (path: string) => Promise<{ success: boolean; message?: string }>
+  writeSchematic: (params: {
+    projectPath: string
+    schematicName: string
+    content: string
+  }) => Promise<{ success: boolean; message?: string }>
+}
+
 // Electron API exposed via preload
 interface ElectronAPI {
   openFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
@@ -54,7 +91,9 @@ interface ElectronAPI {
     nodeVersion: string
     chromeVersion: string
   }>
+  getPath: (name: string) => Promise<string>
   computer: ComputerAPI
+  kicad: KiCadAPI
   oi: OIAPI
   onMqttMessage: (callback: (data: unknown) => void) => () => void
   onWakeWordDetected: (callback: () => void) => () => void
@@ -66,4 +105,5 @@ declare global {
   }
 }
 
-export {}
+export { }
+

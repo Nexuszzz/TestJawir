@@ -7,6 +7,8 @@ import { useWorkspaceStore } from '@stores/workspaceStore'
 import { useModeStore } from '@stores/modeStore'
 import { routeAction, Action, ActionCategory, RiskLevel } from '@services/mode-router'
 import * as openInterpreter from '@services/open-interpreter'
+import * as kicadService from '@services/kicad-service'
+
 
 export interface ToolResult {
   success: boolean
@@ -26,91 +28,239 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>
 // ============================================
 async function handleCreateSchematic(args: Record<string, unknown>): Promise<ToolResult> {
   const template = args.template as string
-  const projectName = (args.project_name as string) || `jawir_${template}_${Date.now()}`
-  
-  // Add card to workspace
+  const projectName = (args.project_name as string) || undefined
+  const openKicad = args.open_kicad === 'yes'
+
   const { addCard } = useWorkspaceStore.getState()
-  
-  const schematicContent = getSchematicTemplate(template)
-  
-  addCard({
-    type: 'kicad',
-    title: `${projectName}.kicad_sch`,
-    content: schematicContent,
-    template,
-    status: 'success',
-  })
-  
-  return {
-    success: true,
-    data: { projectName, template },
-    message: `Skematik ${template} berhasil dibuat dengan nama ${projectName}`,
+
+  try {
+    // Create schematic using KiCad MCP service
+    const result = await kicadService.createSchematicFromTemplate(template, projectName)
+
+    // Add card to workspace with result
+    const data = result.data as { projectName?: string; componentCount?: number } | undefined
+    addCard({
+      type: 'kicad',
+      title: `${data?.projectName || template}.kicad_sch`,
+      content: result.message,
+      template,
+      status: result.success ? 'success' : 'error',
+      metadata: {
+        projectPath: result.projectPath,
+        schematicPath: result.schematicPath,
+        componentCount: data?.componentCount,
+      },
+    })
+
+    // Optionally open KiCad UI
+    if (openKicad && result.success && result.projectPath) {
+      await kicadService.launchKiCad(result.projectPath)
+    }
+
+    return {
+      success: result.success,
+      data: result.data,
+      message: result.message,
+      error: result.error,
+    }
+  } catch (error) {
+    addCard({
+      type: 'kicad',
+      title: `${template}.kicad_sch`,
+      content: `❌ Error: ${error}`,
+      template,
+      status: 'error',
+    })
+    return {
+      success: false,
+      error: String(error),
+      message: `Gagal membuat schematic: ${error}`,
+    }
   }
 }
 
-function getSchematicTemplate(template: string): string {
-  // Return KiCad schematic templates
-  const templates: Record<string, string> = {
-    powerbank: `
-(kicad_sch (version 20231120) (generator "jawir-os")
-  (uuid "powerbank-template")
-  (paper "A4")
-  (title_block (title "Powerbank Module - TP4056 + DW01"))
-  
-  ; TP4056 Charging IC
-  ; DW01 Protection IC
-  ; FS8205A Dual MOSFET
-  ; 18650 Battery Holder
-  ; Micro USB Input
-  ; Power Output with protection
-)`,
-    amplifier: `
-(kicad_sch (version 20231120) (generator "jawir-os")
-  (uuid "amplifier-template")
-  (paper "A4")
-  (title_block (title "5V Stereo Amplifier - PAM8403"))
-  
-  ; PAM8403 Stereo Amplifier IC
-  ; 3.5mm Audio Jack Input
-  ; Speaker Output L/R
-  ; Volume Potentiometer
-  ; Power Input 5V
-  ; Filter Capacitors
-)`,
-    led_indicator: `
-(kicad_sch (version 20231120) (generator "jawir-os")
-  (uuid "led-indicator-template")
-  (paper "A4")
-  (title_block (title "LED Indicator Circuit"))
-  
-  ; LED (Red/Green/Blue options)
-  ; Current Limiting Resistor (330Ω for 5V, 100Ω for 3.3V)
-  ; GPIO Input Pin
-  ; GND Connection
-)`,
+/**
+ * Dynamic Schematic Design Handler - JSON-based
+ * AI specifies components and semantic wire connections
+ * Converter handles coordinate calculation and wire routing
+ */
+async function handleDesignSchematic(args: Record<string, unknown>): Promise<ToolResult> {
+  // Import JSON converter
+  const { convertJSONToKiCad } = await import('@services/json-to-kicad')
+
+  // Parse new JSON format
+  const projectName = (args.project as string) || `schematic_${Date.now()}`
+  const description = (args.description as string) || ''
+  const components = args.components as Array<{
+    type: string
+    reference: string
+    value?: string
+    position: { x: number; y: number }
+    rotation?: number
+  }>
+  const wires = args.wires as Array<{
+    from: { component: string; pin: number | string }
+    to: { component: string; pin: number | string }
+  }>
+  const labels = (args.labels as Array<{
+    name: string
+    x: number
+    y: number
+  }>) || []
+  const openKicad = args.open_kicad === 'yes'
+
+  const { addCard } = useWorkspaceStore.getState()
+
+  try {
+    // Validate inputs
+    if (!components || components.length === 0) {
+      return {
+        success: false,
+        error: 'No components specified',
+        message: 'Tidak ada komponen yang dispesifikasikan. Minimal harus ada 1 komponen.',
+      }
+    }
+
+    if (!wires || wires.length === 0) {
+      return {
+        success: false,
+        error: 'No wires specified',
+        message: 'Tidak ada wire yang dispesifikasikan. Minimal harus ada 1 koneksi.',
+      }
+    }
+
+    // Debug logging - see what AI is sending
+    console.log('[design_schematic] Received args:', JSON.stringify(args, null, 2))
+    console.log('[design_schematic] Components:', components)
+    console.log('[design_schematic] Wires:', wires)
+
+    // Build JSON schematic
+    const schematicJSON = {
+      project: projectName,
+      description,
+      components,
+      wires,
+      labels,
+    }
+
+    console.log('[design_schematic] Built schematicJSON:', JSON.stringify(schematicJSON, null, 2))
+
+    // Convert to KiCad format using new converter
+    const conversionResult = convertJSONToKiCad(schematicJSON)
+
+    // Log debug info from converter
+    console.log('[design_schematic] Conversion result:', {
+      success: conversionResult.success,
+      errors: conversionResult.errors,
+      debug: conversionResult.debug,
+      contentLength: conversionResult.content?.length
+    })
+
+    if (!conversionResult.success || !conversionResult.content) {
+      return {
+        success: false,
+        error: conversionResult.errors?.join(', ') || 'Conversion failed',
+        message: `Konversi gagal: ${conversionResult.errors?.join(', ')}`,
+      }
+    }
+
+    // Write schematic file via Electron API
+    const projectPath = `D:/sijawir/KiCad_Projects/${projectName}`
+    const schematicPath = `${projectPath}/${projectName}.kicad_sch`
+
+    if (window.electronAPI?.kicad) {
+      // Create project folder
+      await window.electronAPI.kicad.createProject(projectName, projectPath)
+
+      // Write schematic content
+      await window.electronAPI.kicad.writeSchematic({
+        projectPath,
+        schematicName: projectName,
+        content: conversionResult.content,
+      })
+    }
+
+    const resultMessage = `✅ Skematik "${projectName}" berhasil dibuat!
+📋 Komponen: ${components.length}
+🔌 Koneksi: ${wires.length}
+🏷️ Labels: ${labels.length}
+📁 Path: ${schematicPath}`
+
+    // Add card to workspace
+    addCard({
+      type: 'kicad',
+      title: `${projectName}.kicad_sch`,
+      content: resultMessage,
+      template: 'json-dynamic',
+      status: 'success',
+      metadata: {
+        projectPath,
+        schematicPath,
+        componentCount: components.length,
+        wireCount: wires.length,
+        description,
+      },
+    })
+
+    // Optionally open KiCad UI
+    if (openKicad) {
+      await kicadService.launchKiCad(projectPath)
+    }
+
+    return {
+      success: true,
+      data: {
+        projectName,
+        componentCount: components.length,
+        wireCount: wires.length,
+        labelCount: labels.length,
+        projectPath,
+        schematicPath,
+      },
+      message: resultMessage,
+    }
+  } catch (error) {
+    addCard({
+      type: 'kicad',
+      title: `${projectName}.kicad_sch`,
+      content: `❌ Error: ${error}`,
+      template: 'json-dynamic',
+      status: 'error',
+    })
+    return {
+      success: false,
+      error: String(error),
+      message: `Gagal membuat skematik: ${error}`,
+    }
   }
-  
-  return templates[template] || templates.led_indicator
 }
+
 
 async function handleOpenKicadProject(args: Record<string, unknown>): Promise<ToolResult> {
   const projectPath = args.project_path as string
-  
-  if (window.electronAPI?.computer) {
-    // Open KiCad with the project file
-    await window.electronAPI.computer.openApp(`kicad "${projectPath}"`)
-    return {
-      success: true,
-      message: `Membuka project KiCad: ${projectPath}`,
-    }
-  }
-  
+
+  const result = await kicadService.openProject(projectPath)
+
   return {
-    success: false,
-    error: 'Electron API not available',
-    message: 'Tidak dapat membuka KiCad (Electron API tidak tersedia)',
+    success: result.success,
+    message: result.message,
+    error: result.error,
   }
 }
+
+async function handleLaunchKicad(args: Record<string, unknown>): Promise<ToolResult> {
+  const projectPath = args.project_path as string | undefined
+
+  const result = await kicadService.launchKiCad(projectPath)
+
+  return {
+    success: result.success,
+    message: result.message,
+    error: result.error,
+  }
+}
+
+
 
 // ============================================
 // IOT HANDLERS
@@ -118,9 +268,9 @@ async function handleOpenKicadProject(args: Record<string, unknown>): Promise<To
 async function handleGetIotStatus(args: Record<string, unknown>): Promise<ToolResult> {
   const device = args.device as string
   const { fireDetection, fanDimmer } = useIoTStore.getState()
-  
+
   let data: Record<string, unknown> = {}
-  
+
   if (device === 'fire_detection' || device === 'all') {
     data.fireDetection = {
       temperature: fireDetection.temperature,
@@ -130,7 +280,7 @@ async function handleGetIotStatus(args: Record<string, unknown>): Promise<ToolRe
       isOnline: fireDetection.isOnline,
     }
   }
-  
+
   if (device === 'fan_dimmer' || device === 'all') {
     data.fanDimmer = {
       speed: fanDimmer.speed,
@@ -138,7 +288,7 @@ async function handleGetIotStatus(args: Record<string, unknown>): Promise<ToolRe
       isOnline: fanDimmer.isOnline,
     }
   }
-  
+
   return {
     success: true,
     data,
@@ -148,26 +298,26 @@ async function handleGetIotStatus(args: Record<string, unknown>): Promise<ToolRe
 
 function formatIotStatus(data: Record<string, unknown>): string {
   const parts: string[] = []
-  
+
   if (data.fireDetection) {
     const fd = data.fireDetection as Record<string, unknown>
     parts.push(`🔥 Fire Detection: Suhu ${fd.temperature}°C, Kelembaban ${fd.humidity}%, Gas ${fd.gasLevel}%, Alarm ${fd.alarmActive ? 'AKTIF' : 'Mati'}, Status ${fd.isOnline ? 'Online' : 'Offline'}`)
   }
-  
+
   if (data.fanDimmer) {
     const fan = data.fanDimmer as Record<string, unknown>
     parts.push(`💨 Kipas: ${fan.isOn ? `Nyala ${fan.speed}%` : 'Mati'}, Status ${fan.isOnline ? 'Online' : 'Offline'}`)
   }
-  
+
   return parts.join('\n')
 }
 
 async function handleControlBuzzer(args: Record<string, unknown>): Promise<ToolResult> {
   const action = args.action as string
   const { sendCommand } = useIoTStore.getState()
-  
+
   sendCommand('buzzer', action === 'on' ? 'ON' : 'OFF')
-  
+
   return {
     success: true,
     message: `Buzzer ${action === 'on' ? 'dinyalakan' : 'dimatikan'}`,
@@ -177,18 +327,18 @@ async function handleControlBuzzer(args: Record<string, unknown>): Promise<ToolR
 async function handleSetFanSpeed(args: Record<string, unknown>): Promise<ToolResult> {
   const speed = args.speed as number
   const { sendCommand, updateFanDimmer } = useIoTStore.getState()
-  
+
   // Validate speed range
   const clampedSpeed = Math.max(0, Math.min(100, speed))
-  
+
   updateFanDimmer({ speed: clampedSpeed, isOn: clampedSpeed > 0 })
   sendCommand('fan', clampedSpeed.toString())
-  
+
   return {
     success: true,
     data: { speed: clampedSpeed },
-    message: clampedSpeed === 0 
-      ? 'Kipas dimatikan' 
+    message: clampedSpeed === 0
+      ? 'Kipas dimatikan'
       : `Kecepatan kipas diatur ke ${clampedSpeed}%`,
   }
 }
@@ -199,10 +349,10 @@ async function handleSetFanSpeed(args: Record<string, unknown>): Promise<ToolRes
 async function handleSendWhatsapp(args: Record<string, unknown>): Promise<ToolResult> {
   const contactName = args.contact_name as string
   const message = args.message as string
-  
+
   // Add to workspace for user confirmation
   const { addCard } = useWorkspaceStore.getState()
-  
+
   addCard({
     type: 'whatsapp',
     title: `Kirim ke ${contactName}`,
@@ -210,7 +360,7 @@ async function handleSendWhatsapp(args: Record<string, unknown>): Promise<ToolRe
     status: 'pending_confirmation',
     contactName,
   })
-  
+
   return {
     success: true,
     data: { contactName, message, status: 'pending' },
@@ -225,16 +375,16 @@ import * as computerControl from '@services/computer-control'
 
 async function handleOpenApplication(args: Record<string, unknown>): Promise<ToolResult> {
   const appName = args.app_name as string
-  
+
   const result = await computerControl.openApplication(appName)
-  
+
   if (result.success) {
     return {
       success: true,
       message: `Membuka aplikasi ${appName}`,
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -244,16 +394,16 @@ async function handleOpenApplication(args: Record<string, unknown>): Promise<Too
 
 async function handleOpenFolder(args: Record<string, unknown>): Promise<ToolResult> {
   const folderPath = args.folder_path as string
-  
+
   const result = await computerControl.openFolder(folderPath)
-  
+
   if (result.success) {
     return {
       success: true,
       message: `Membuka folder ${folderPath}`,
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -264,11 +414,11 @@ async function handleOpenFolder(args: Record<string, unknown>): Promise<ToolResu
 async function handleFindFile(args: Record<string, unknown>): Promise<ToolResult> {
   const query = args.query as string
   const location = (args.location as string) || 'D:\\expo'
-  
+
   // Use PowerShell to search for files
   const command = `Get-ChildItem -Path "${location}" -Recurse -Filter "*${query}*" -ErrorAction SilentlyContinue | Select-Object -First 10 FullName | ConvertTo-Json`
   const result = await computerControl.executeCommand(command)
-  
+
   if (result.success && result.stdout) {
     try {
       const files = JSON.parse(result.stdout)
@@ -285,7 +435,7 @@ async function handleFindFile(args: Record<string, unknown>): Promise<ToolResult
       }
     }
   }
-  
+
   return {
     success: true,
     data: { query, location, results: [] },
@@ -295,16 +445,16 @@ async function handleFindFile(args: Record<string, unknown>): Promise<ToolResult
 
 async function handleOpenUrl(args: Record<string, unknown>): Promise<ToolResult> {
   const url = args.url as string
-  
+
   const result = await computerControl.openURL(url)
-  
+
   if (result.success) {
     return {
       success: true,
       message: `Membuka ${url} di browser`,
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -314,9 +464,9 @@ async function handleOpenUrl(args: Record<string, unknown>): Promise<ToolResult>
 
 async function handleSetVolume(args: Record<string, unknown>): Promise<ToolResult> {
   const level = args.level as number
-  
+
   const result = await computerControl.setVolume(level)
-  
+
   if (result.success) {
     return {
       success: true,
@@ -324,7 +474,7 @@ async function handleSetVolume(args: Record<string, unknown>): Promise<ToolResul
       message: `Volume diatur ke ${level}%`,
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -334,14 +484,14 @@ async function handleSetVolume(args: Record<string, unknown>): Promise<ToolResul
 
 async function handleToggleMute(_args: Record<string, unknown>): Promise<ToolResult> {
   const result = await computerControl.toggleMute()
-  
+
   if (result.success) {
     return {
       success: true,
       message: 'Toggle mute berhasil',
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -351,14 +501,14 @@ async function handleToggleMute(_args: Record<string, unknown>): Promise<ToolRes
 
 async function handleShowDesktop(_args: Record<string, unknown>): Promise<ToolResult> {
   const result = await computerControl.showDesktop()
-  
+
   if (result.success) {
     return {
       success: true,
       message: 'Menampilkan desktop',
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -368,14 +518,14 @@ async function handleShowDesktop(_args: Record<string, unknown>): Promise<ToolRe
 
 async function handleMinimizeAll(_args: Record<string, unknown>): Promise<ToolResult> {
   const result = await computerControl.minimizeAllWindows()
-  
+
   if (result.success) {
     return {
       success: true,
       message: 'Semua jendela diminimize',
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -385,14 +535,14 @@ async function handleMinimizeAll(_args: Record<string, unknown>): Promise<ToolRe
 
 async function handleLockScreen(_args: Record<string, unknown>): Promise<ToolResult> {
   const result = await computerControl.lockScreen()
-  
+
   if (result.success) {
     return {
       success: true,
       message: 'Layar dikunci',
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -402,7 +552,7 @@ async function handleLockScreen(_args: Record<string, unknown>): Promise<ToolRes
 
 async function handleScreenshot(_args: Record<string, unknown>): Promise<ToolResult> {
   const result = await computerControl.takeScreenshot()
-  
+
   if (result.success) {
     return {
       success: true,
@@ -410,7 +560,7 @@ async function handleScreenshot(_args: Record<string, unknown>): Promise<ToolRes
       message: `Screenshot disimpan ke ${result.path}`,
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -420,7 +570,7 @@ async function handleScreenshot(_args: Record<string, unknown>): Promise<ToolRes
 
 async function handleSystemPower(args: Record<string, unknown>): Promise<ToolResult> {
   const action = args.action as string
-  
+
   let result
   switch (action) {
     case 'shutdown':
@@ -442,7 +592,7 @@ async function handleSystemPower(args: Record<string, unknown>): Promise<ToolRes
         message: `Aksi tidak dikenal: ${action}`,
       }
   }
-  
+
   if (result.success) {
     const messages: Record<string, string> = {
       shutdown: 'Komputer akan shutdown dalam 60 detik',
@@ -455,7 +605,7 @@ async function handleSystemPower(args: Record<string, unknown>): Promise<ToolRes
       message: messages[action] || 'Perintah berhasil',
     }
   }
-  
+
   return {
     success: false,
     error: result.error,
@@ -469,10 +619,10 @@ async function handleSystemPower(args: Record<string, unknown>): Promise<ToolRes
 async function handleWebSearch(args: Record<string, unknown>): Promise<ToolResult> {
   const query = args.query as string
   const numResults = (args.num_results as number) || 5
-  
+
   // Add browser card to workspace
   const { addCard } = useWorkspaceStore.getState()
-  
+
   addCard({
     type: 'browser',
     title: `Pencarian: ${query}`,
@@ -480,7 +630,7 @@ async function handleWebSearch(args: Record<string, unknown>): Promise<ToolResul
     status: 'loading',
     query,
   })
-  
+
   return {
     success: true,
     data: { query, numResults },
@@ -491,10 +641,10 @@ async function handleWebSearch(args: Record<string, unknown>): Promise<ToolResul
 async function handleBrowseUrl(args: Record<string, unknown>): Promise<ToolResult> {
   const url = args.url as string
   const extractType = (args.extract_type as string) || 'summary'
-  
+
   // Add browser card to workspace
   const { addCard } = useWorkspaceStore.getState()
-  
+
   addCard({
     type: 'browser',
     title: new URL(url).hostname,
@@ -503,7 +653,7 @@ async function handleBrowseUrl(args: Record<string, unknown>): Promise<ToolResul
     url,
     extractType,
   })
-  
+
   return {
     success: true,
     data: { url, extractType },
@@ -517,7 +667,7 @@ async function handleBrowseUrl(args: Record<string, unknown>): Promise<ToolResul
 async function handleGmailRead(args: Record<string, unknown>): Promise<ToolResult> {
   const filter = args.filter as string
   const count = (args.count as number) || 5
-  
+
   // This would need Google API implementation
   return {
     success: true,
@@ -529,7 +679,7 @@ async function handleGmailRead(args: Record<string, unknown>): Promise<ToolResul
 async function handleDriveList(args: Record<string, unknown>): Promise<ToolResult> {
   const folder = (args.folder as string) || 'root'
   const fileType = (args.file_type as string) || 'all'
-  
+
   return {
     success: true,
     data: { folder, fileType, files: [] },
@@ -539,7 +689,7 @@ async function handleDriveList(args: Record<string, unknown>): Promise<ToolResul
 
 async function handleCalendarEvents(args: Record<string, unknown>): Promise<ToolResult> {
   const range = args.range as string
-  
+
   return {
     success: true,
     data: { range, events: [] },
@@ -552,7 +702,7 @@ async function handleCalendarEvents(args: Record<string, unknown>): Promise<Tool
 // ============================================
 async function handleOIExecute(args: Record<string, unknown>): Promise<ToolResult> {
   const { mode } = useModeStore.getState()
-  
+
   // Only available in advanced mode
   if (mode !== 'advanced') {
     return {
@@ -565,18 +715,18 @@ async function handleOIExecute(args: Record<string, unknown>): Promise<ToolResul
       },
     }
   }
-  
+
   const message = args.message as string
   const language = (args.language as 'auto' | 'python' | 'javascript' | 'shell' | 'powershell' | 'applescript') || 'auto'
   const autoRun = (args.auto_run as boolean) || false
-  
+
   try {
     const response = await openInterpreter.executePrompt({
       prompt: message,
       language,
       autoConfirm: autoRun,
     })
-    
+
     // Add result to workspace
     const { addCard } = useWorkspaceStore.getState()
     addCard({
@@ -586,7 +736,7 @@ async function handleOIExecute(args: Record<string, unknown>): Promise<ToolResul
       status: response.status === 'completed' ? 'success' : 'error',
       data: { type: 'oi_result', response },
     })
-    
+
     return {
       success: response.status === 'completed',
       data: response,
@@ -607,7 +757,7 @@ async function handleOIExecute(args: Record<string, unknown>): Promise<ToolResul
 
 async function handleOISearchContent(args: Record<string, unknown>): Promise<ToolResult> {
   const { mode } = useModeStore.getState()
-  
+
   if (mode !== 'advanced') {
     return {
       success: false,
@@ -619,23 +769,23 @@ async function handleOISearchContent(args: Record<string, unknown>): Promise<Too
       },
     }
   }
-  
+
   const query = args.query as string
   const directory = (args.directory as string) || '.'
   const filePattern = (args.file_pattern as string) || '*'
   const useRegex = (args.use_regex as boolean) || false
-  
+
   // Build OI prompt for content search
   const prompt = useRegex
     ? `Cari file yang mengandung pattern regex "${query}" di folder "${directory}" dengan pattern file ${filePattern}. Tampilkan nama file dan baris yang cocok.`
     : `Cari file yang mengandung teks "${query}" di folder "${directory}" dengan pattern file ${filePattern}. Tampilkan nama file dan baris yang cocok.`
-  
+
   try {
     const response = await openInterpreter.executePrompt({
       prompt,
       autoConfirm: true,
     })
-    
+
     return {
       success: response.status === 'completed',
       data: { query, directory, filePattern, results: response.output },
@@ -656,7 +806,7 @@ async function handleOISearchContent(args: Record<string, unknown>): Promise<Too
 
 async function handleOIBatchProcess(args: Record<string, unknown>): Promise<ToolResult> {
   const { mode } = useModeStore.getState()
-  
+
   if (mode !== 'advanced') {
     return {
       success: false,
@@ -668,12 +818,12 @@ async function handleOIBatchProcess(args: Record<string, unknown>): Promise<Tool
       },
     }
   }
-  
+
   const operation = args.operation as string
   const sourcePattern = args.source_pattern as string
   const destination = args.destination as string
   const customCommand = args.custom_command as string
-  
+
   // Build OI prompt based on operation
   let prompt = ''
   switch (operation) {
@@ -698,13 +848,13 @@ async function handleOIBatchProcess(args: Record<string, unknown>): Promise<Tool
     default:
       prompt = `Proses batch untuk file "${sourcePattern}" dengan operasi "${operation}".`
   }
-  
+
   try {
     const response = await openInterpreter.executePrompt({
       prompt,
       autoConfirm: false, // Batch operations should ask for confirmation
     })
-    
+
     return {
       success: response.status === 'completed',
       data: { operation, sourcePattern, destination, results: response.output },
@@ -725,7 +875,7 @@ async function handleOIBatchProcess(args: Record<string, unknown>): Promise<Tool
 
 async function handleOIAnalyzeCode(args: Record<string, unknown>): Promise<ToolResult> {
   const { mode } = useModeStore.getState()
-  
+
   if (mode !== 'advanced') {
     return {
       success: false,
@@ -737,11 +887,11 @@ async function handleOIAnalyzeCode(args: Record<string, unknown>): Promise<ToolR
       },
     }
   }
-  
+
   const filePath = args.file_path as string
   const action = args.action as string
   const instructions = args.instructions as string
-  
+
   // Build OI prompt based on action
   let prompt = ''
   switch (action) {
@@ -766,13 +916,13 @@ async function handleOIAnalyzeCode(args: Record<string, unknown>): Promise<ToolR
     default:
       prompt = `${action} kode di file "${filePath}". ${instructions || ''}`
   }
-  
+
   try {
     const response = await openInterpreter.executePrompt({
       prompt,
       autoConfirm: action === 'analyze', // Only analyze doesn't need confirmation
     })
-    
+
     // Add result to workspace
     const { addCard } = useWorkspaceStore.getState()
     addCard({
@@ -782,7 +932,7 @@ async function handleOIAnalyzeCode(args: Record<string, unknown>): Promise<ToolR
       status: response.status === 'completed' ? 'success' : 'error',
       data: { type: 'code_analysis', filePath, action, response },
     })
-    
+
     return {
       success: response.status === 'completed',
       data: { filePath, action, results: response.output },
@@ -807,16 +957,18 @@ async function handleOIAnalyzeCode(args: Record<string, unknown>): Promise<ToolR
 const toolHandlers: Record<string, ToolHandler> = {
   // KiCad
   create_schematic: handleCreateSchematic,
+  design_schematic: handleDesignSchematic,
   open_kicad_project: handleOpenKicadProject,
-  
+  launch_kicad: handleLaunchKicad,
+
   // IoT
   get_iot_status: handleGetIotStatus,
   control_buzzer: handleControlBuzzer,
   set_fan_speed: handleSetFanSpeed,
-  
+
   // WhatsApp
   send_whatsapp: handleSendWhatsapp,
-  
+
   // Computer Control
   open_application: handleOpenApplication,
   open_folder: handleOpenFolder,
@@ -829,11 +981,11 @@ const toolHandlers: Record<string, ToolHandler> = {
   lock_screen: handleLockScreen,
   take_screenshot: handleScreenshot,
   system_power: handleSystemPower,
-  
+
   // Web Research
   web_search: handleWebSearch,
   browse_url: handleBrowseUrl,
-  
+
   // Google Workspace
   gmail_read: handleGmailRead,
   drive_list: handleDriveList,
@@ -854,7 +1006,7 @@ export async function routeToolCall(
   args: Record<string, unknown>
 ): Promise<ToolResult> {
   const handler = toolHandlers[toolName]
-  
+
   if (!handler) {
     return {
       success: false,
@@ -862,7 +1014,7 @@ export async function routeToolCall(
       message: `Tool "${toolName}" tidak ditemukan`,
     }
   }
-  
+
   try {
     return await handler(args)
   } catch (error) {
@@ -883,26 +1035,26 @@ export async function routeToolCall(
 const TOOL_TO_CATEGORY: Record<string, ActionCategory> = {
   // App control
   open_application: 'app_control',
-  
+
   // Volume control
   set_volume: 'volume_control',
   toggle_mute: 'volume_control',
-  
+
   // Window control
   show_desktop: 'window_control',
   minimize_all: 'window_control',
-  
+
   // System control (requires confirmation)
   lock_screen: 'system_control',
   system_power: 'system_control',
-  
+
   // Screenshots
   take_screenshot: 'screenshot',
-  
+
   // File operations
   find_file: 'file_operation',
   open_folder: 'file_operation',
-  
+
   // Web browsing
   open_url: 'web_browse',
   web_search: 'web_browse',
@@ -930,7 +1082,7 @@ const TOOL_RISK_LEVELS: Record<string, RiskLevel> = {
   open_url: 'low',
   web_search: 'low',
   browse_url: 'low',
-  
+
   // Open Interpreter tools - Higher risk by default
   oi_execute: 'high',
   oi_search_content: 'medium',
@@ -949,7 +1101,7 @@ export async function routeToolCallWithMode(
 ): Promise<ToolResult> {
   const category = TOOL_TO_CATEGORY[toolName] || 'unknown'
   const riskLevel = TOOL_RISK_LEVELS[toolName] || 'medium'
-  
+
   // Build action for mode router
   const action: Action = {
     category,
@@ -958,10 +1110,10 @@ export async function routeToolCallWithMode(
     riskLevel,
     requiresConfirmation: riskLevel === 'high' || riskLevel === 'critical',
   }
-  
+
   // Get route decision
   const routeResult = routeAction(action)
-  
+
   // Handle blocked actions
   if (routeResult.mode === 'blocked') {
     return {
@@ -974,7 +1126,7 @@ export async function routeToolCallWithMode(
       },
     }
   }
-  
+
   // Handle confirmation if required
   if (routeResult.requiresConfirmation && onConfirmRequired) {
     const confirmed = await onConfirmRequired(action)
@@ -990,7 +1142,7 @@ export async function routeToolCallWithMode(
       }
     }
   }
-  
+
   // Route to appropriate handler
   if (routeResult.mode === 'ipc') {
     // Use existing IPC handlers
@@ -1018,10 +1170,10 @@ async function executeWithOpenInterpreter(
 ): Promise<ToolResult> {
   // Build natural language prompt for OI
   const prompt = buildOIPrompt(toolName, args)
-  
+
   try {
     const response = await openInterpreter.executePrompt({ prompt, autoConfirm: false })
-    
+
     if (response.status === 'completed') {
       return {
         success: true,
@@ -1095,12 +1247,12 @@ function buildOIPrompt(toolName: string, args: Record<string, unknown>): string 
     web_search: () => `Lakukan pencarian web untuk "${args.query}"`,
     browse_url: () => `Buka dan ekstrak konten dari ${args.url}`,
   }
-  
+
   const promptBuilder = prompts[toolName]
   if (promptBuilder) {
     return promptBuilder()
   }
-  
+
   // Default: describe the tool call
   return `Jalankan perintah "${toolName}" dengan parameter: ${JSON.stringify(args)}`
 }
