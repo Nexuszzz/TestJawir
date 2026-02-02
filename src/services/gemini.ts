@@ -9,20 +9,16 @@ import { GEMINI_TOOLS } from './gemini-tools'
 // API KEY ROTATION SYSTEM
 // ============================================
 
-// List of API keys for rotation
-const API_KEYS: string[] = [
-  'AIzaSyCSR63tBy0BzOvRfnZw1dt-kn9iQi4PnsA',
-  'AIzaSyBiX3suuLNTfhifDx3Tjh3wM94B8DOjkgo',
-  'AIzaSyAgiTnAFBNaU9XFOTC_1H4mfCE_nXLx3YA',
-  'AIzaSyA5UcYz9pzkNMnsn-X3hbmAp-HnuSLS8uk',
-  'AIzaSyDJFJTx5bMOyRN3iZo41NHUEJLhh-nrNUA',
-  'AIzaSyDqplsHPPnV_9tsLLCNSjcbGpAafFtGzlI',
-  'AIzaSyDz74r9ZJYQ1n3qFxeHDUHdKzXr02z5CyQ',
-  'AIzaSyCCYo8XVuWPafmNmkPpJlWKKYGg-QvVGvw',
-  'AIzaSyAAIhfm99NDJknAaS8gS22CA3mIL7SHigI',
-  'AIzaSyDy2onNMJcukAjHm4In2PWdL6qzhI3HD4k',
-  'AIzaSyBroHjz9C4sngrNbR8xlYTrrRw4rQHLjOw',
-]
+// Load API keys from environment variable (set in .env.local)
+// Format: VITE_GEMINI_API_KEYS=key1,key2,key3,...
+const envKeys = import.meta.env.VITE_GEMINI_API_KEYS || ''
+const API_KEYS: string[] = envKeys.split(',').filter((key: string) => key.trim().length > 0)
+
+// Fallback warning if no keys found
+if (API_KEYS.length === 0) {
+  console.warn('[Gemini] No API keys found! Set VITE_GEMINI_API_KEYS in .env.local')
+}
+
 
 let currentKeyIndex = 0
 let failedKeys: Set<number> = new Set()
